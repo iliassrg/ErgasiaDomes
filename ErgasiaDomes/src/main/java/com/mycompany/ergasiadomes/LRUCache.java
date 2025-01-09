@@ -2,14 +2,28 @@ package com.mycompany.ergasiadomes;
 
 import java.util.HashMap;
 
-/**
- * Υλοποίηση μιας LRU κρυφής μνήμης με χρήση γενικών τύπων (K, V).
- *
- * @param <K> Ο τύπος του κλειδιού.
- * @param <V> Ο τύπος της τιμής.
- */
 public class LRUCache<K, V> implements Cache<K, V> {
-    // Εσωτερική κλάση για τους κόμβους της διπλά συνδεδεμένης λίστας.
+    
+    public enum CacheReplacementPolicy {
+    LRU("Least Recently Used"),
+    MRU("Most Recently Used");
+    
+    private final String description;
+    
+    CacheReplacementPolicy(String description) {
+        this.description = description;
+    }
+    
+    public String getDescription() {
+        return description;
+    }
+    
+    @Override
+    public String toString() {
+        return description;
+        }
+    } 
+    
     private class CacheNode {
         K key;
         V value;
@@ -24,29 +38,41 @@ public class LRUCache<K, V> implements Cache<K, V> {
 
     private final int maxCapacity; // Το μέγιστο μέγεθος της κρυφής μνήμης.
     private final HashMap<K, CacheNode> storage; // Χάρτης για γρήγορη αναζήτηση.
-    private final CacheNode pseudoHead, pseudoTail; // Ψευδο-κεφαλή και ουρά για εύκολη διαχείριση.
+    private CacheNode pseudoHead; // Ψευδο-κεφαλή και ουρά για εύκολη διαχείριση.
+    private CacheNode pseudoTail; // Ψευδο-κεφαλή και ουρά για εύκολη διαχείριση.
+    private final CacheReplacementPolicy policy;
+    private int hitCount;
+    private int missCount;
 
     // Κατασκευαστής που δέχεται τη μέγιστη χωρητικότητα.
-    public LRUCache(int capacity) {
+    public LRUCache(int capacity, CacheReplacementPolicy policy) {
         this.maxCapacity = capacity;
-        this.storage = new HashMap<>(capacity);
-
-        // Αρχικοποίηση ψευδο-κεφαλής και ουράς.
-        pseudoHead = new CacheNode(null, null);
-        pseudoTail = new CacheNode(null, null);
-
-        pseudoHead.next = pseudoTail;
-        pseudoTail.prev = pseudoHead;
+        this.storage = new HashMap<>(capacity);       
+        this.policy = policy;
+        this.pseudoHead = null;
+        this.pseudoTail = null;
+        this.hitCount = 0;
+        this.missCount = 0;
     }
 
-    // Επιστρέφει την τιμή για το κλειδί, αν υπάρχει, αλλιώς null.
+    public int getHitCount() {
+        return hitCount;
+    }
+
+    public int getMissCount() {
+        return missCount;
+    } 
+    
+    
     @Override
     public V get(K key) {
         CacheNode node = storage.get(key);
         if (node == null) {
+            missCount++;
             return null; // Το κλειδί δεν υπάρχει.
         }
-        moveToFront(node); // Μετακίνηση του κόμβου στην κορυφή.
+        hitCount++;
+        moveToTail(node); // Μετακίνηση του κόμβου στην κορυφή.
         return node.value;
     }
 
@@ -56,45 +82,90 @@ public class LRUCache<K, V> implements Cache<K, V> {
         CacheNode node = storage.get(key);
 
         if (node != null) {
-            // Αν το κλειδί υπάρχει ήδη, ενημερώνουμε την τιμή.
             node.value = value;
-            moveToFront(node);
+            moveToTail(node);
         } else {
             // Αν το κλειδί δεν υπάρχει, δημιουργούμε νέο κόμβο.
             node = new CacheNode(key, value);
             storage.put(key, node);
-            addToFront(node);
+            addToTail(node);
 
             if (storage.size() > maxCapacity) {
                 removeLeastRecentlyUsed();
+            } else {
+                removeMostRecentlyUsed();
             }
         }
     }
 
     // Προσθήκη ενός κόμβου στην κορυφή της λίστας.
-    private void addToFront(CacheNode node) {
-        node.next = pseudoHead.next;
-        node.prev = pseudoHead;
-        pseudoHead.next.prev = node;
-        pseudoHead.next = node;
+    private void addToTail(CacheNode node) {
+        if (pseudoHead == null) {
+            pseudoHead = node;
+            pseudoTail = node;
+        } else {
+            pseudoTail.next = node;
+            node.prev = pseudoTail;
+            pseudoTail = node;
+        }
     }
 
     // Μετακίνηση ενός κόμβου στην κορυφή της λίστας.
-    private void moveToFront(CacheNode node) {
+    private void moveToTail(CacheNode node) {
+        if (node == pseudoTail) return;
         removeNode(node);
-        addToFront(node);
+        addToTail(node);
     }
 
     // Αφαίρεση ενός κόμβου από τη λίστα.
     private void removeNode(CacheNode node) {
-        node.prev.next = node.next;
-        node.next.prev = node.prev;
+        if (node.prev != null) {
+            node.prev.next = node.next;
+        } else {
+            pseudoHead = node.next;
+        }
+        
+        if (node.next != null) {
+            node.next.prev = node.prev;
+        } else {
+            pseudoTail = node.prev;
+        }
+        
+        node.prev = null;
+        node.next = null;
     }
 
     // Αφαίρεση του λιγότερο πρόσφατα χρησιμοποιημένου κόμβου.
     private void removeLeastRecentlyUsed() {
-        CacheNode toRemove = pseudoTail.prev;
-        removeNode(toRemove);
+        if (pseudoHead == null) {
+            return;
+        }
+        CacheNode toRemove = pseudoHead;
         storage.remove(toRemove.key);
+        pseudoHead = pseudoHead.next;
+        if (pseudoHead != null) {
+            pseudoHead.prev = null;
+        }
     }
+    
+    private void removeMostRecentlyUsed() {
+        if (pseudoTail == null) {
+            return;
+        }
+        CacheNode toRemove = pseudoTail;
+        storage.remove(toRemove.key);
+        pseudoTail = pseudoTail.prev;
+        if (pseudoTail != null) {
+            pseudoTail.next = null;
+        }
+    }
+
+    public String getPolicyDescription() {
+        return policy.getDescription();
+    }
+
+    @Override
+    public String toString() {
+        return "Cache using " + policy.toString(); 
+    }     
 }
